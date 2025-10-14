@@ -10,8 +10,8 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 # PostgreSQL configuration
 DB_NAME = "open_heavens_db"
-DB_USER = "stephen"
-DB_PASSWORD = "qwerty"
+DB_USER = "postgres"
+DB_PASSWORD = "wiseappsdb"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
