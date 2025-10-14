@@ -1,0 +1,344 @@
+import psycopg2
+import requests
+from datetime import datetime
+
+# Supabase configuration
+SUPABASE_URL = "https://vhqbtwmvteemgfsebvff.supabase.co"
+SUPABASE_URL = f"https://db.{PROJECT_ID}.supabase.co"  # Using db subdomain
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZocWJ0d212dGVlbWdmc2VidmZmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDUwNDgwODUsImV4cCI6MjAyMDYyNDA4NX0.xC_D4_2MXG5Cb97cG-wUwESz32MDDBbeZ-dJIEhq4w8"
+
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZocWJ0d212dGVlbWdmc2VidmZmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDUwNDgwODUsImV4cCI6MjAyMDYyNDA4NX0.xC_D4_2MXG5Cb97cG-wUwESz32MDDBbeZ-dJIEhq4w8"
+
+# PostgreSQL configuration
+DB_NAME = "open_heavens_db"
+DB_USER = "stephen"
+DB_PASSWORD = "qwerty"
+DB_HOST = "localhost"
+DB_PORT = "5432"
+
+def fetch_data(table_name):
+    """Fetch data from Supabase REST API"""
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    retry_strategy = Retry(
+        total=5,
+        backoff_factor=0.1,
+        status_forcelist=[500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    # Use raw IP address since DNS resolution is failing
+    # Use the correct Supabase REST URL format
+    main_url = f"{SUPABASE_URL}/rest/v1/{table_name}"
+    
+    headers.update({
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Prefer': 'return=representation'
+    })
+    
+    # Configure retry strategy with increased timeout
+    retry_strategy = Retry(
+        total=5,
+        backoff_factor=0.5,
+        status_forcelist=[500, 502, 503, 504, 404],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Try with both project URL formats
+    urls = [
+        main_url,
+        f"{main_url}?select=*"
+    ]
+    
+    response = None
+    success = False
+    
+    for url in urls:
+        print(f"\nTrying URL: {url}")
+        try:
+            # Add custom DNS resolution
+            response = session.get(url, headers=headers, timeout=30)
+            print(f"Status code: {response.status_code}")
+            
+            if response.status_code == 200:
+                success = True
+                return response.json()
+            elif response.status_code == 404 and 'select=*' not in url:
+                # If first attempt without select=* fails, continue to next URL
+                continue
+            else:
+                response.raise_for_status()
+                
+        except requests.RequestException as inner_e:
+            print(f"Error with URL {url}:")
+            print(f"Error type: {type(inner_e).__name__}")
+            print(f"Error message: {str(inner_e)}")
+            if response and hasattr(response, 'text'):
+                print(f"Response text: {response.text}")
+            continue
+        except requests.RequestException as e:
+            print(f"Error with URL {url}:")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
+            if response:
+                print(f"Response text: {response.text}")
+                
+    if not success:
+        raise requests.RequestException(f"Failed to fetch data from all URLs")
+    try:
+        response = session.get(url, headers=headers, timeout=30)
+        print(f"Status code: {response.status_code}")
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"Error fetching data:")
+        print(f"URL: {url}")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        if response:
+            print(f"Response text: {response.text}")
+        
+        # Try alternate URL format
+        url = f"https://api.supabase.com/v1/project/{PROJECT_ID}/sql"
+        print(f"\nTrying alternate URL: {url}")
+        try:
+            response = session.post(url, headers=headers, json={
+                "query": f"SELECT * FROM \"{table_name}\""
+            }, timeout=30)
+            print(f"Status code: {response.status_code}")
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e2:
+            print(f"Error with alternate URL:")
+            print(f"Error type: {type(e2).__name__}")
+            print(f"Error message: {str(e2)}")
+            if response:
+                print(f"Response text: {response.text}")
+            raise e  # Raise the original error if both attempts fail
+    return []
+
+def insert_batch_data(target_conn, table_name, columns, rows, batch_size=100, transform_funcs=None):
+    """Insert data in batches with proper transaction handling"""
+    if not rows:
+        print(f"No data found in {table_name}")
+        return 0
+    
+    successful_inserts = 0
+    placeholders = ','.join(['%s'] * len(columns))
+    
+    # Remove quotes from column names for SQL
+    column_list = [col.strip('"') for col in columns]
+    insert_query = f'INSERT INTO {table_name} ({",".join(column_list)}) VALUES ({placeholders})'
+    
+    # Column mapping for special cases (keep original case from schema)
+    column_mapping = {
+        'Bible in One Year Verse': 'Bible_in_One_Year_Verse',
+        'Bible in One Year': 'Bible_in_One_Year',
+        'Action Text': 'Action_Text',
+        'Action Types': 'Action_Types',
+        'Memories ': 'Memories',
+        'Message ': 'Message',
+        'HymnTitle ': 'HymnTitle',
+        'Title': 'Title',
+        'Date': 'Date',
+        'Read': 'Read',
+        'BibleReading': 'BibleReading',
+        'Hymn': 'Hymn',
+        'Hymnal': 'Hymnal'
+    }
+    
+    # Process rows in batches
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i:i + batch_size]
+        with target_conn.cursor() as cur:
+            try:
+                # Prepare values for all rows in the batch
+                batch_values = []
+                for row in batch:
+                    values = []
+                    for idx, col in enumerate(columns):
+                        stripped_col = col.strip('"')
+                        
+                        # Map the column name if it's in our mapping
+                        source_col = None
+                        for old_name, new_name in column_mapping.items():
+                            if stripped_col == new_name:
+                                source_col = old_name
+                                break
+                        
+                        if source_col and source_col in row:
+                            value = row[source_col]
+                        else:
+                            value = row.get(stripped_col)
+                        
+                        # Apply transform function if exists
+                        if transform_funcs and stripped_col in transform_funcs:
+                            value = transform_funcs[stripped_col](value)
+                        
+                        values.append(value)
+                    batch_values.append(values)
+                
+                # Execute batch insert
+                cur.executemany(insert_query, batch_values)
+                target_conn.commit()
+                successful_inserts += len(batch)
+                print(f"Inserted batch {i//batch_size + 1} ({successful_inserts} rows so far)")
+            except Exception as e:
+                print(f"Error inserting batch into {table_name}: {e}")
+                print(f"First failing row values: {batch_values[0] if batch_values else None}")
+                print(f"Query was: {insert_query}")
+                target_conn.rollback()
+                continue
+    
+    return successful_inserts
+
+def clear_table(conn, table_name):
+    """Clear a table and its dependent tables"""
+    with conn.cursor() as cur:
+        try:
+            cur.execute(f'TRUNCATE TABLE {table_name} CASCADE')
+            conn.commit()
+            print(f"Cleared table {table_name}")
+        except Exception as e:
+            print(f"Error clearing table {table_name}: {e}")
+            conn.rollback()
+
+def transform_action_type(value):
+    """Transform action type values from Supabase format to local DB format"""
+    mapping = {
+        "PRAYER POINT:": "Pray",
+        "ACTION POINT:": "Respond",
+        "KEY POINT:": "Reflect",
+        "REFLECTION:": "Reflect"
+    }
+    return mapping.get(value, value)
+
+def transform_teen_columns(value):
+    """Transform Open Heavens Teenagers column values"""
+    if value and isinstance(value, str):
+        return value.strip()
+    return value
+
+def ensure_hymns_exist(target_conn, hymn_ids):
+    """Ensure all referenced hymns exist in the hymns table"""
+    if not hymn_ids:
+        return
+    
+    with target_conn.cursor() as cur:
+        for hymn_id in hymn_ids:
+            # Check if hymn exists
+            cur.execute('SELECT 1 FROM hymns WHERE id = %s', (hymn_id,))
+            if not cur.fetchone():
+                # If hymn doesn't exist, create a placeholder
+                try:
+                    cur.execute(
+                        'INSERT INTO hymns (id, created_at, hymntitle, hymnverse) VALUES (%s, NOW(), %s, %s)',
+                        (hymn_id, f'Hymn {hymn_id}', 'Placeholder hymn verse')
+                    )
+                    target_conn.commit()
+                    print(f"Created placeholder hymn with id {hymn_id}")
+                except Exception as e:
+                    print(f"Error creating placeholder hymn {hymn_id}: {e}")
+                    target_conn.rollback()
+
+def main():
+    # Connect to target database
+    target_conn = psycopg2.connect(
+        "postgresql://stephen:qwerty@localhost:5432/open_heavens_db",
+        cursor_factory=RealDictCursor
+    )
+
+    try:
+        # Clear tables before inserting
+        tables = ['likes', 'comments', 'prayer_requests', 'open_heavens_teenagers', 'open_heavens', 'hymns']
+        for table in tables:
+            clear_table(target_conn, table)
+
+        # Copy hymns first (no dependencies)
+        print("\nMigrating hymns...")
+        hymn_columns = ['id', 'created_at', 'hymntitle', 'hymnverse']
+        hymn_data = fetch_data('Hymns')
+        hymn_count = insert_batch_data(target_conn, 'hymns', hymn_columns, hymn_data)
+        print(f"Successfully copied {hymn_count} hymns")
+        
+        # Copy open_heavens (depends on hymns)
+        print("\nMigrating open_heavens...")
+        oh_columns = ['id', 'created_at', 'topic', 'date', 'biblereading', 'biblereadingtext', 
+                     'memoryverse', 'message', 'actiontype', 'hymn', 'bible1year', 
+                     'bible1yeartext', 'actionpoint']
+        oh_data = fetch_data('OPEN HEAVENS')
+        oh_count = insert_batch_data(
+            target_conn, 
+            'open_heavens', 
+            oh_columns, 
+            oh_data, 
+            transform_funcs={'actiontype': transform_action_type}
+        )
+        print(f"Successfully copied {oh_count} open_heavens entries")
+        
+        # Copy open_heavens_teenagers
+        print("\nMigrating open_heavens_teenagers...")
+        teen_columns = ['id', 'created_at', 'title', 'date', 'memories', 'read', 
+                       'biblereading', 'message', 'hymntitle', 'hymn', 
+                       'bible_in_one_year_verse', 'bible_in_one_year', 
+                       'action_text', 'action_types', 'hymnal']
+        teen_data = fetch_data('Open Heavens Teenagers')
+
+        # Get all hymnal IDs from teen_data
+        hymnal_ids = set()
+        for row in teen_data:
+            if isinstance(row, dict) and 'Hymnal' in row and row['Hymnal']:
+                hymnal_ids.add(row['Hymnal'])
+
+        # Ensure referenced hymns exist
+        ensure_hymns_exist(target_conn, hymnal_ids)
+
+        transform_funcs = {col.strip('"'): transform_teen_columns for col in teen_columns}
+        teen_count = insert_batch_data(
+            target_conn, 
+            'open_heavens_teenagers', 
+            teen_columns, 
+            teen_data,
+            transform_funcs=transform_funcs
+        )
+        print(f"Successfully copied {teen_count} open_heavens_teenagers entries")
+        
+        # Copy prayer requests
+        print("\nMigrating prayer_requests...")
+        prayer_request_columns = ['id', 'created_at', 'name', 'userref', 'request_content']
+        prayer_requests_data = fetch_data('prayer_requests')
+        prayer_count = insert_batch_data(target_conn, 'prayer_requests', prayer_request_columns, prayer_requests_data)
+        print(f"Successfully copied {prayer_count} prayer requests")
+
+        # Copy comments
+        print("\nMigrating comments...")
+        comment_columns = ['id', 'created_at', 'openheavensid', 'comment', 'name']
+        comment_data = fetch_data('comments')
+        comment_count = insert_batch_data(target_conn, 'comments', comment_columns, comment_data)
+        print(f"Successfully copied {comment_count} comments")
+
+        # Copy likes
+        print("\nMigrating likes...")
+        like_columns = ['id', 'created_at', 'openheavensid', 'like', 'liked']
+        likes_data = fetch_data('likes')
+        likes_count = insert_batch_data(target_conn, 'likes', like_columns, likes_data)
+        print(f"Successfully copied {likes_count} likes")
+
+    except Exception as e:
+        print(f"Error during migration: {e}")
+    finally:
+        target_conn.close()
+
+if __name__ == "__main__":
+    main()

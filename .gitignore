@@ -1,0 +1,8 @@
+__pycache__/
+.venv
+.env
+*.pyc
+db_data/
+/.idea
+/.vscode
+poetry.lock
