@@ -3,7 +3,10 @@ from app.config import get_settings
 from app.routers import hymns, open_heavens, comments, likes, prayers
 
 settings = get_settings()
-app = FastAPI(title="Open Heavens API")
+app = FastAPI(
+    root_path="/open-heavens",  # Add this line
+    title="Open Heavens API"
+)
 
 # API key dependency
 async def require_api_key(x_api_key: str = Header(...)):

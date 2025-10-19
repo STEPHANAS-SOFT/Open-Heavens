@@ -1,0 +1,15 @@
+[Unit]
+Description=Open Heavens Notification Service
+After=network.target postgresql.service
+
+[Service]
+User=openheavens
+Group=openheavens
+WorkingDirectory=/opt/open-heavens/notification_service
+Environment=PYTHONPATH=/opt/open-heavens
+ExecStart=/opt/open-heavens/venv/bin/python /opt/open-heavens/notification_service/main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
