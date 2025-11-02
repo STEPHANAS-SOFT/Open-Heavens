@@ -26,11 +26,11 @@ jobs:
       - name: Deploy Open Heavens
         run: |
           ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} -p ${{ secrets.SERVER_PORT }} "bash -s" << 'ENDSSH'
-          cd /opt/applications/Open-Heavens
+          cd /root/Open-Heavens
           git pull origin main
           source venv/bin/activate
           pip install -r requirements.txt
-          sudo systemctl restart open-heavens
+          systemctl restart open-heavens
           echo "Checking service status..."
-          sudo systemctl status open-heavens --no-pager
+          systemctl status open-heavens --no-pager
           ENDSSH
