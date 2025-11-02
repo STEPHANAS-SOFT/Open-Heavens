@@ -4,9 +4,21 @@ from app.routers import hymns, open_heavens, comments, likes, prayers
 
 settings = get_settings()
 app = FastAPI(
-    root_path="/open-heavens",  # Add this line
-    title="Open Heavens API"
+    title="Open Heavens API",
+    docs_url="/docs",
+    openapi_url="/openapi.json",
+    root_path="/open-heavens"  # This handles the base path
 )
+
+# Add this for development/docs access if you need API key bypass for docs
+@app.middleware("http")
+async def add_test_key(request, call_next):
+    if request.url.path.endswith("/docs") or request.url.path.endswith("/openap>
+        request.headers.__dict__["_list"].append(
+            (b"x-api-key", b"test-key-for-docs")
+        )
+    response = await call_next(request)
+    return response
 
 # API key dependency
 async def require_api_key(x_api_key: str = Header(...)):
