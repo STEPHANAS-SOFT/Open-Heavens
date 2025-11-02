@@ -7,7 +7,7 @@ app = FastAPI(
     title="Open Heavens API",
     docs_url="/docs",
     openapi_url="/openapi.json",
-    root_path="/open-heavens"  # This handles the base path
+    root_path="/open-heavens"  # This handles the base path yess
 )
 
 # Add this for development/docs access if you need API key bypass for docs
